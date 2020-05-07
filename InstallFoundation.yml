@@ -1,0 +1,343 @@
+resources:
+  - name: platform-automation-tasks
+    type: s3
+    source:
+      endpoint: ((minio_endpoint))
+      access_key_id: ((minio_access_key_id))
+      secret_access_key: ((minio_secret_access_key))
+      bucket: ((s3_image_bucket))
+      regexp: platform-automation-tasks-(.*).zip
+      disable_ssl: true
+
+  - name: platform-automation-image
+    type: s3
+    source:
+      endpoint: ((minio_endpoint))
+      access_key_id: ((minio_access_key_id))
+      secret_access_key: ((minio_secret_access_key))
+      bucket: ((s3_image_bucket))
+      regexp: platform-automation-image-(.*).tgz
+      disable_ssl: true
+
+  - name: pas-product
+    type: s3
+    source:
+      endpoint: ((minio_endpoint))
+      access_key_id: ((minio_access_key_id))
+      secret_access_key: ((minio_secret_access_key))
+      bucket: ((s3_image_bucket))
+      regexp: cf-((pas_version)).build.(.*).pivotal
+      disable_ssl: true
+      
+      
+  - name: pks-product
+    type: s3
+    source:
+      endpoint: ((minio_endpoint))
+      access_key_id: ((minio_access_key_id))
+      secret_access_key: ((minio_secret_access_key))
+      bucket: ((s3_image_bucket))
+      regexp: pivotal-container-service-((pks_version)).build.(.*).pivotal
+      disable_ssl: true
+
+  - name: pas-stemcell
+    type: s3
+    source:
+      endpoint: ((minio_endpoint))
+      access_key_id: ((minio_access_key_id))
+      secret_access_key: ((minio_secret_access_key))
+      bucket: ((s3_image_bucket))
+      regexp: bosh-stemcell-(.*)-vsphere-esxi-ubuntu-xenial-go_agent.tgz
+      disable_ssl: true
+
+  - name: state
+    type: s3
+    source:
+      access_key_id: ((aws_access_key_id))
+      secret_access_key: ((aws_secret_access_key))
+      bucket: ((s3_config_bucket))
+      versioned_file: state.yml
+      disable_ssl: true
+
+  - name: pas-staged-config
+    type: s3
+    source:
+      access_key_id: ((aws_access_key_id))
+      secret_access_key: ((aws_secret_access_key))
+      bucket: ((s3_config_bucket))
+      versioned_file : staged-configs/cf.yml
+      disable_ssl: true
+
+  - name: director-staged-config
+    type: s3
+    source:
+      access_key_id: ((aws_access_key_id))
+      secret_access_key: ((aws_secret_access_key))
+      bucket: ((s3_config_bucket))
+      versioned_file : staged-configs/director.yml
+      disable_ssl: true
+
+  - name: config
+    type: s3
+    source:
+      access_key_id: ((aws_access_key_id))
+      secret_access_key: ((aws_secret_access_key))
+      bucket: ((s3_config_bucket))
+      versioned_file : pas-settings.yml
+      disable_ssl: true
+
+  - name: pks-config
+    type: s3
+    source:
+      access_key_id: ((aws_access_key_id))
+      secret_access_key: ((aws_secret_access_key))
+      bucket: ((s3_config_bucket))
+      versioned_file : pks_settings.yaml 
+      disable_ssl: true      
+      
+
+  - name: env
+    type: s3
+    source:
+      access_key_id: ((aws_access_key_id))
+      secret_access_key: ((aws_secret_access_key))
+      bucket: ((s3_config_bucket))
+      versioned_file: env.yml
+      disable_ssl: true
+
+  - name: daily-trigger
+    type: time
+    source:
+      interval: 24h
+
+credhub-interpolate: &credhub-interpolate
+  image: platform-automation-image
+  file: platform-automation-tasks/tasks/credhub-interpolate.yml
+  params:
+    CREDHUB_CLIENT: ((credhub_username))
+    CREDHUB_SECRET: ((credhub_password))
+    CREDHUB_SERVER: ((credhub_url))
+    CREDHUB_CA_CERT: ((credhub_ca_cert))
+    PREFIX: /concourse/main
+    #INTERPOLATION_PATHS: "download-product"
+  input_mapping:
+    files: config
+  output_mapping:
+    interpolated-files: config
+
+jobs:
+- name: setup-lab-environment
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: platform-automation-image
+      params:
+        unpack: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: config
+      params:
+        unpack: true
+  - task: interpolate-creds
+    <<: *credhub-interpolate
+        
+- name: upload-and-stage-pas
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: platform-automation-image
+      params:
+        unpack: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: env
+      passed: [ upload-stemcells ]
+      trigger: true
+    - get: state 
+      passed: [ upload-stemcells ]
+      trigger: true
+    - get: config
+    - get: pas-product 
+  - task: interpolate-creds
+    <<: *credhub-interpolate
+  - task: upload-and-stage-pas
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/upload-and-stage-product.yml
+    input_mapping:
+      product: pas-product
+      
+      
+- name: upload-and-stage-pks
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: platform-automation-image
+      params:
+        unpack: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: env
+      passed: [ upload-stemcells ]
+      trigger: true
+    - get: state 
+      passed: [ upload-stemcells ]
+      trigger: true
+    - get: pks-config
+    - get: pks-product    
+  - task: interpolate-creds
+    <<: *credhub-interpolate
+  - task: upload-and-stage-pas
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/upload-and-stage-product.yml
+    input_mapping:
+      product: pks-product
+
+- name: configure-pas
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: state 
+      passed: [ upload-and-stage-pas ]
+      trigger: true
+    - get: env
+      passed: [ upload-and-stage-pas ]
+      trigger: true
+    - get: config
+      params:
+        unpack: false
+    - get: platform-automation-image
+      params:
+        unpack: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+  - task: scan-directory
+    image: platform-automation-image
+    config:
+      platform: linux
+      inputs:
+      - name: config
+      - name: env
+      run:
+        path: bash
+        args:
+        - "-c"
+        - |
+          ls -al ./config
+          ls -al ./env
+  - task: configure-pas
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/configure-product.yml
+    input_mapping: 
+      config: config
+    params:
+      CONFIG_FILE: pas-settings.yml
+     
+- name: configure-pks
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: state 
+      passed: [ upload-and-stage-pks ]
+      trigger: true
+    - get: env
+      passed: [ upload-and-stage-pks ]
+      trigger: true
+    - get: pks-config
+      params:
+        unpack: false
+    - get: platform-automation-image
+      params:
+        unpack: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+  - task: configure-pks
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/configure-product.yml
+    input_mapping: 
+      config: pks-config
+    params:
+      CONFIG_FILE: pks_settings.yaml
+
+- name: upload-stemcells
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: state 
+      passed: []
+      trigger: false
+    - get: env
+      passed: []
+      trigger: false
+    - get: platform-automation-image
+      params:
+        unpack: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: pas-stemcell
+  - task: upload-pas-stemcell
+    input_mapping: { stemcell: pas-stemcell }
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/upload-stemcell.yml
+
+- name: apply-product-changes
+  serial: true
+  serial_groups: [ install ]
+  plan:
+  - in_parallel:
+    - get: state 
+      passed: [ configure-pas ]
+      trigger: true
+    - get: env
+      passed: [ configure-pas ]
+      trigger: true
+    - get: platform-automation-image
+      params:
+        unpack: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+  - task: apply-product-changes
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/apply-changes.yml
+
+- name: export-product-configs
+  plan:
+  - in_parallel:
+    - get: platform-automation-image
+      params:
+        unpack: true
+    - get: platform-automation-tasks
+      params:
+        unpack: true
+    - get: daily-trigger
+      trigger: true
+    - get: env
+      passed: [ apply-product-changes ]
+  - task: pas-staged-config
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/staged-config.yml
+    params: 
+      PRODUCT_NAME: cf
+    ensure:
+      put: pas-staged-config
+      params:
+        file: generated-config/cf.yml
+  - task: staged-director-config
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/staged-director-config.yml
+    ensure: 
+      put: director-staged-config
+      params:
+        file:  generated-config/director.yml
