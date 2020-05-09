@@ -8,5 +8,9 @@ Prerequisites:
 2. [Platform Automation](https://docs.pivotal.io/platform-automation/v4.3/index.html/)
 3. S3 Storage
 4. [Minio](https://min.io/)
+5. I used [BUCC](https://github.com/starkandwayne/bucc)
+### Steps
 
+1. Publish to concourse fly -t bucc  set-pipeline --pipeline InstallFoundation --config InstallFoundation.yml
+2. 
 > Written with [StackEdit](https://stackedit.io/).
