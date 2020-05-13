@@ -1,0 +1,4 @@
+org: homelab
+spaces:
+- development
+enable-delete-spaces: true
